@@ -1,21 +1,275 @@
 import styles from "@/styles/Post.module.css";
 
+type PageParams = Promise<{ slug: string }>;
+
+type MediaItem = {
+  url: string;
+  kind: "image" | "video";
+  isCover?: boolean;
+};
+
+type BodyBlock =
+  | { type: "text"; key: string; value: string }
+  | { type: "media"; key: string; value: MediaItem };
+
+type PublicPost = {
+  id: string;
+  _id?: string;
+  title?: string;
+  body?: string;
+  name?: string;
+  username?: string;
+  createdAt?: string;
+  category?: string;
+  subCategory?: string;
+  coverImage?: string;
+  cover_image?: string;
+  coverUrl?: string;
+  cover_url?: string;
+  coverType?: string;
+  coverMimeType?: string;
+  profilePic?: string;
+  profileUrl?: string;
+  userProfile?: string;
+  likes?: number;
+  comments?: number;
+  dislike?: number;
+  dislikes?: number;
+  witness?: number;
+  media?: unknown[];
+  mediaItems?: unknown[];
+  mediaList?: unknown[];
+  attachments?: unknown[];
+  files?: unknown[];
+  imageUrls?: unknown[];
+  image_urls?: unknown[];
+  mediaUrls?: unknown[];
+  media_urls?: unknown[];
+};
+
+const bodyImageLinkRegex = /\[(Link|Link_cover):-\s*(https?:\/\/[^\]\s]+)\s*\]/gi;
+const partialBodyImageLinkRegex = /\[(?:Link|Link_cover):-?[^\]\n]*\]?/gi;
+const mediaTokenRegex = /\[\[media:([^[\]]+)\]\]/g;
+const videoCoverUrlRegex = /\.(mp4|mov|webm|ogg|m4v)(?:[?#].*)?$/i;
+const publicPostsHref = "/";
+
 function extractId(slug?: string) {
   if (!slug || typeof slug !== "string") return "";
   return slug.split("-").pop() || "";
 }
 
-// 🔥 Fetch post (ISR)
-async function getPost(id: string) {
-  const res = await fetch(
-    `https://server.echoidchat.online/post/public/${id}`,
+function isVideoUrl(url = "") {
+  return videoCoverUrlRegex.test(String(url).trim());
+}
+
+function getMediaKindFromUrl(url = ""): "image" | "video" {
+  return isVideoUrl(url) ? "video" : "image";
+}
+
+function getStructuredMediaUrl(entry: unknown) {
+  if (!entry) return "";
+  if (typeof entry === "string") return entry.trim();
+  if (typeof entry !== "object") return "";
+
+  const value = entry as Record<string, unknown>;
+  return String(
+    value.url ||
+      value.mediaUrl ||
+      value.media_url ||
+      value.publicUrl ||
+      value.public_url ||
+      value.signedUrl ||
+      value.signed_url ||
+      value.previewUrl ||
+      value.preview_url ||
+      value.imageUrl ||
+      value.image_url ||
+      value.videoUrl ||
+      value.video_url ||
+      value.coverImage ||
+      value.cover_image ||
+      ""
+  ).trim();
+}
+
+function getStructuredMediaKind(entry: unknown, fallbackUrl = ""): "image" | "video" {
+  if (entry && typeof entry === "object") {
+    const value = entry as Record<string, unknown>;
+    const explicitKind = String(value.kind || value.mediaType || value.type || value.mimeType || "")
+      .trim()
+      .toLowerCase();
+    if (explicitKind.startsWith("video")) return "video";
+    if (explicitKind.startsWith("image")) return "image";
+  }
+  return getMediaKindFromUrl(fallbackUrl);
+}
+
+function pushMediaItem(items: MediaItem[], seenUrls: Set<string>, entry: unknown, isCover = false) {
+  const url = getStructuredMediaUrl(entry);
+  if (!url || seenUrls.has(url)) return;
+  seenUrls.add(url);
+
+  const entryRecord = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+  items.push({
+    url,
+    kind: getStructuredMediaKind(entry, url),
+    isCover: Boolean(isCover || entryRecord.isCover || entryRecord.cover),
+  });
+}
+
+function extractBodyMediaItems(body = "") {
+  const mediaItems: MediaItem[] = [];
+  const seenUrls = new Set<string>();
+  let match: RegExpExecArray | null;
+  const source = String(body || "");
+
+  bodyImageLinkRegex.lastIndex = 0;
+  while ((match = bodyImageLinkRegex.exec(source))) {
+    const label = String(match[1] || "").trim().toLowerCase();
+    const url = String(match[2] || "").trim();
+    if (!url || seenUrls.has(url)) continue;
+    seenUrls.add(url);
+    mediaItems.push({
+      url,
+      kind: getMediaKindFromUrl(url),
+      isCover: label === "link_cover",
+    });
+  }
+  bodyImageLinkRegex.lastIndex = 0;
+
+  return mediaItems;
+}
+
+function getPostMediaItems(post: PublicPost) {
+  const bodyMedia = extractBodyMediaItems(post.body);
+  const mediaItems = [...bodyMedia];
+  const seenUrls = new Set(bodyMedia.map((item) => item.url));
+
+  [
+    ...(Array.isArray(post.mediaItems) ? post.mediaItems : []),
+    ...(Array.isArray(post.media) ? post.media : []),
+    ...(Array.isArray(post.mediaList) ? post.mediaList : []),
+    ...(Array.isArray(post.attachments) ? post.attachments : []),
+    ...(Array.isArray(post.files) ? post.files : []),
+    ...(Array.isArray(post.imageUrls) ? post.imageUrls : []),
+    ...(Array.isArray(post.image_urls) ? post.image_urls : []),
+    ...(Array.isArray(post.mediaUrls) ? post.mediaUrls : []),
+    ...(Array.isArray(post.media_urls) ? post.media_urls : []),
+  ].forEach((entry) => pushMediaItem(mediaItems, seenUrls, entry));
+
+  pushMediaItem(
+    mediaItems,
+    seenUrls,
     {
-      next: { revalidate: 60 },
-    }
+      url: post.coverImage || post.cover_image || post.coverUrl || post.cover_url || "",
+      kind: post.coverType || post.coverMimeType || "",
+      isCover: true,
+    },
+    true
   );
 
-  const data = await res.json();
+  return mediaItems.sort((left, right) => Number(Boolean(right.isCover)) - Number(Boolean(left.isCover)));
+}
 
+function getLeadMedia(post: PublicPost) {
+  const mediaItems = getPostMediaItems(post);
+  return mediaItems.find((item) => item.isCover) || mediaItems[0] || null;
+}
+
+function stripMediaLinks(body = "") {
+  return String(body || "")
+    .replace(bodyImageLinkRegex, "")
+    .replace(partialBodyImageLinkRegex, "")
+    .replace(mediaTokenRegex, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function getBodyBlocks(post: PublicPost) {
+  const source = String(post.body || "");
+  const leadMedia = getLeadMedia(post);
+  const blocks: BodyBlock[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  bodyImageLinkRegex.lastIndex = 0;
+  while ((match = bodyImageLinkRegex.exec(source))) {
+    if (match.index > lastIndex) {
+      const text = source.slice(lastIndex, match.index);
+      if (text.trim()) {
+        blocks.push({ type: "text", key: `text-${match.index}`, value: text });
+      }
+    }
+
+    const label = String(match[1] || "").trim().toLowerCase();
+    const url = String(match[2] || "").trim();
+    const media: MediaItem = {
+      url,
+      isCover: label === "link_cover",
+      kind: getMediaKindFromUrl(url),
+    };
+
+    if (url && (!leadMedia || url !== leadMedia.url)) {
+      blocks.push({ type: "media", key: `media-${match.index}`, value: media });
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+  bodyImageLinkRegex.lastIndex = 0;
+
+  if (lastIndex < source.length) {
+    const text = source.slice(lastIndex);
+    if (text.trim()) {
+      blocks.push({ type: "text", key: `text-tail-${lastIndex}`, value: text });
+    }
+  }
+
+  return blocks
+    .map((block) =>
+      block.type === "text"
+        ? {
+            ...block,
+            value: block.value
+              .replace(/[ \t]+\n/g, "\n")
+              .replace(/\n[ \t]+/g, "\n")
+              .replace(/[ \t]{2,}/g, " ")
+              .replace(/\n{3,}/g, "\n\n")
+              .trim(),
+          }
+        : block
+    )
+    .filter((block) => (block.type === "text" ? block.value.length > 0 : Boolean(block.value.url)));
+}
+
+function formatRelativeTime(createdAt?: string) {
+  const time = Date.parse(String(createdAt || ""));
+  if (!Number.isFinite(time)) return "";
+  const minutes = Math.max(0, Math.floor((Date.now() - time) / 60000));
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+function displayCategory(value?: string) {
+  return String(value || "")
+    .split(" ")
+    .filter(Boolean)
+    .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
+    .join(" ");
+}
+
+async function getPost(id: string): Promise<PublicPost | null> {
+  const res = await fetch(`https://server.echoidchat.online/post/public/${id}`, {
+    next: { revalidate: 60 },
+  });
+
+  const data = await res.json();
   if (!data?.success || !data?.post) return null;
 
   return {
@@ -24,109 +278,153 @@ async function getPost(id: string) {
   };
 }
 
-// 🔥 SEO metadata (replaces <Head>)
-export async function generateMetadata({ params }: { params: { slug: string } }) {
-  const id = extractId(params.slug);
+function renderMedia(media: MediaItem | null, altText: string, className = styles.mediaFrame) {
+  if (!media?.url) return null;
+
+  return (
+    <div className={className}>
+      {media.kind === "video" ? (
+        <video src={media.url} className={styles.media} controls playsInline preload="metadata" />
+      ) : (
+        <img src={media.url} alt={altText} className={styles.media} />
+      )}
+    </div>
+  );
+}
+
+export async function generateMetadata({ params }: { params: PageParams }) {
+  const { slug } = await params;
+  const id = extractId(slug);
   const post = await getPost(id);
 
-  if (!post) {
-    return { title: "Post not found" };
-  }
+  if (!post) return { title: "Post not found" };
+
+  const description = stripMediaLinks(post.body).slice(0, 150);
+  const leadMedia = getLeadMedia(post);
 
   return {
-    title: post.title,
-    description: post.body?.slice(0, 120) || "",
+    title: post.title || "EchoId post",
+    description,
     openGraph: {
-      title: post.title,
-      description: post.body || "",
-      images: [post.coverImage || ""],
+      title: post.title || "EchoId post",
+      description,
+      images: leadMedia?.kind === "image" ? [leadMedia.url] : [],
     },
   };
 }
 
-// 🔥 Main page (Server Component)
-// 
-export default async function Page({
-  params,
-}: {
-  params: Promise<{ slug: string }>;
-}) {
+export default async function Page({ params }: { params: PageParams }) {
   const { slug } = await params;
   const id = extractId(slug);
   const post = await getPost(id);
 
   if (!post) {
-    return <div>Not found</div>;
+    return (
+      <main className={styles.page}>
+        <section className={styles.notFound}>
+          <h1>Post not found</h1>
+          <a href={publicPostsHref}>Back to EchoId</a>
+        </section>
+      </main>
+    );
   }
 
-  const renderMedia = (media: any, key: number) => {
-    if (!media?.url) return null;
-
-    return media.kind === "video" ? (
-      <video key={key} src={media.url} controls className={styles.media} />
-    ) : (
-      <img key={key} src={media.url} alt={post.title} className={styles.media} />
-    );
-  };
+  const author = post.name || "Anonymous";
+  const handle = post.username ? `@${post.username}` : "@anonymous";
+  const title = post.title || "EchoId post";
+  const leadMedia = getLeadMedia(post);
+  const mediaItems = getPostMediaItems(post);
+  const bodyBlocks = getBodyBlocks(post);
+  const extraMedia = mediaItems.filter((item) => item.url && item.url !== leadMedia?.url && bodyBlocks.length === 0);
+  const fullBody = stripMediaLinks(post.body);
+  const category = displayCategory(post.category);
+  const appPostHref = `/app/post/${post.id}`;
 
   return (
-    <main className={styles.container}>
-      {/* Back */}
-      <a href="/" className={styles.back}>
-        ← Back
-      </a>
+    <main className={styles.page}>
+      <header className={styles.header}>
+        <a href={publicPostsHref} className={styles.back} aria-label="Back to EchoId public posts">
+          <span aria-hidden="true">←</span>
+          <span>Back</span>
+        </a>
+        <strong>Echo</strong>
+      </header>
 
-      <article className={styles.card}>
-        <h1 className={styles.title}>{post.title}</h1>
+      <section className={styles.layout}>
+        <article className={styles.card}>
+          {leadMedia ? <div className={styles.hero}>{renderMedia(leadMedia, title)}</div> : null}
 
-        <div className={styles.author}>
-          <strong>{post.name}</strong>
-          <span>@{post.username}</span>
-        </div>
+          <div className={`${styles.sheet} ${leadMedia ? "" : styles.noHero}`}>
+            {extraMedia.length > 0 ? (
+              <div className={styles.mediaStack}>
+                {extraMedia.map((media, index) => (
+                  <div key={`${media.url}-${index}`}>{renderMedia(media, title)}</div>
+                ))}
+              </div>
+            ) : null}
 
-        <span className={styles.time}>
-          {post.relativeTimeLabel || ""}
-        </span>
+            <section className={styles.copy}>
+              <div className={styles.authorCard}>
+                <div className={styles.avatar} aria-hidden="true">
+                  {post.profilePic || post.profileUrl || post.userProfile ? (
+                    <img src={post.profilePic || post.profileUrl || post.userProfile} alt={author} />
+                  ) : (
+                    <span>{author.charAt(0).toUpperCase()}</span>
+                  )}
+                </div>
+                <div className={styles.authorCopy}>
+                  <strong>{author}</strong>
+                  <span>{handle}</span>
+                </div>
+              </div>
 
-        {/* Media */}
-        {post.media?.map((m: any, i: number) => renderMedia(m, i))}
+              <div className={styles.metaRow}>
+                {formatRelativeTime(post.createdAt) ? <span>{formatRelativeTime(post.createdAt)}</span> : null}
+                {category ? <span>{category}</span> : null}
+                {post.subCategory ? <span>{displayCategory(post.subCategory)}</span> : null}
+              </div>
 
-        {/* Body */}
-        <div className={styles.body}>
-          {Array.isArray(post.bodyBlocks) && post.bodyBlocks.length > 0 ? (
-            post.bodyBlocks.map((block: any, i: number) =>
-              block.type === "media" ? (
-                renderMedia(block.value, i)
-              ) : (
-                <p key={i} className={styles.text}>
-                  {block.value}
-                </p>
-              )
-            )
-          ) : post.body ? (
-            <p className={styles.text}>{post.body}</p>
-          ) : (
-            <p className={styles.muted}>Media-only post</p>
-          )}
-        </div>
+              <h1 className={styles.title}>{title}</h1>
 
-        {/* 🔥 Actions (NO onClick — server-safe) */}
-        <div className={styles.actions}>
-          <a href={`/app/post/${post.id}`}>👍 {post.likes || 0}</a>
-          <a href={`/app/post/${post.id}`}>💬 {post.comments || 0}</a>
-          <a href={`/app/post/${post.id}`}>👎 {post.dislike || 0}</a>
-        </div>
+              <div className={styles.body}>
+                {bodyBlocks.length > 0 ? (
+                  bodyBlocks.map((block) =>
+                    block.type === "media" ? (
+                      <div key={block.key} className={styles.inlineMedia}>
+                        {renderMedia(block.value, title)}
+                      </div>
+                    ) : (
+                      <p key={block.key}>{block.value}</p>
+                    )
+                  )
+                ) : fullBody ? (
+                  <p>{fullBody}</p>
+                ) : (
+                  <p className={styles.muted}>Media-only post</p>
+                )}
+              </div>
 
-        {/* CTA */}
-        <div className={styles.comments}>
-          <h3>Comments</h3>
-          <p>Open the app to view and interact</p>
+              <div className={styles.stats} aria-label="Post stats">
+                <span>Likes {Number(post.likes || 0)}</span>
+                <span>Comments {Number(post.comments || 0)}</span>
+                <span>Dislikes {Number(post.dislike ?? post.dislikes ?? 0)}</span>
+                {Number(post.witness || 0) > 0 ? <span>Witness {Number(post.witness || 0)}</span> : null}
+              </div>
+            </section>
+          </div>
+        </article>
 
-          <a href={`/app/post/${post.id}`}>
+        <aside className={styles.sidePanel}>
+          <div>
+            <span className={styles.panelLabel}>Public preview</span>
+            <h2>Open EchoId for the full conversation.</h2>
+            <p>Comments and reactions are available in the app experience.</p>
+          </div>
+          <a href={appPostHref} className={styles.cta}>
             Open full experience
           </a>
-        </div>
-      </article>
+        </aside>
+      </section>
     </main>
   );
 }
