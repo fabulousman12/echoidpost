@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
+import { permanentRedirect } from "next/navigation";
 import styles from "@/styles/Post.module.css";
 
-type PageParams = Promise<{ slug: string }>;
+type PageParams = Promise<{ id: string; slug: string }>;
 
 type MediaItem = {
   url: string;
@@ -29,6 +30,20 @@ type PublicPost = {
   dislike?: number;
   dislikes?: number;
   witness?: number;
+  expire?: string;
+  expiresAt?: string;
+  expiryAt?: string;
+  expireAt?: string;
+  isDeleted?: boolean | number | string;
+  isDelete?: boolean | number | string;
+  deleted?: boolean | number | string;
+  banned?: boolean | number | string;
+  isBanned?: boolean | number | string;
+  userBanned?: boolean | number | string;
+  status?: string;
+  visibility?: string;
+  isPublic?: boolean;
+  public?: boolean;
   media?: unknown[];
   mediaItems?: unknown[];
   mediaList?: unknown[];
@@ -48,9 +63,14 @@ const publicPostsHref = "/post";
 const appOrigin = "https://app.echoidchat.online";
 const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL || "https://post.echoidchat.online";
 
-function extractId(slug?: string) {
-  if (!slug || typeof slug !== "string") return "";
-  return slug.split("-").pop() || "";
+function slugify(value: string) {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 70) || "echo"
+  );
 }
 
 function isVideoUrl(url = "") {
@@ -266,6 +286,32 @@ function getPostTitle(post: PublicPost) {
   return post.title?.trim() || "EchoId post";
 }
 
+function isTruthyFlag(value: unknown) {
+  if (typeof value === "string") return ["true", "1", "yes"].includes(value.trim().toLowerCase());
+  return Boolean(value);
+}
+
+function getExpiryTime(post: PublicPost) {
+  const rawExpiry = post.expire || post.expiresAt || post.expiryAt || post.expireAt || "";
+  const expiry = Date.parse(String(rawExpiry));
+  return Number.isFinite(expiry) ? expiry : 0;
+}
+
+function isIndexablePost(post: PublicPost) {
+  const status = String(post.status || "").trim().toLowerCase();
+  const visibility = String(post.visibility || "").trim().toLowerCase();
+  const expiry = getExpiryTime(post);
+
+  if (isTruthyFlag(post.isDeleted) || isTruthyFlag(post.isDelete) || isTruthyFlag(post.deleted)) return false;
+  if (isTruthyFlag(post.banned) || isTruthyFlag(post.isBanned) || isTruthyFlag(post.userBanned)) return false;
+  if (["deleted", "banned", "blocked", "removed", "expired", "private", "draft"].includes(status)) return false;
+  if (visibility && visibility !== "public") return false;
+  if (post.isPublic === false || post.public === false) return false;
+  if (expiry > 0 && expiry <= Date.now()) return false;
+
+  return true;
+}
+
 function getSeoDescription(post: PublicPost) {
   const body = stripMediaLinks(post.body).replace(/\s+/g, " ").trim();
   const author = getAuthorName(post);
@@ -281,8 +327,12 @@ function getSeoDescription(post: PublicPost) {
   return (description || `Public EchoId post by ${author}`).slice(0, 160);
 }
 
-function getPostUrl(slug: string) {
-  return `${siteOrigin}/post/${encodeURIComponent(slug)}`;
+function getPostPath(post: PublicPost) {
+  return `/post/${encodeURIComponent(post.id)}/${slugify(getPostTitle(post))}`;
+}
+
+function getPostUrl(post: PublicPost) {
+  return `${siteOrigin}${getPostPath(post)}`;
 }
 
 async function getPost(id: string): Promise<PublicPost | null> {
@@ -293,10 +343,12 @@ async function getPost(id: string): Promise<PublicPost | null> {
   const data = await res.json();
   if (!data?.success || !data?.post) return null;
 
-  return {
+  const post = {
     ...data.post,
-    id: data.post._id,
+    id: data.post._id || data.post.id,
   };
+
+  return isIndexablePost(post) ? post : null;
 }
 
 function renderMedia(media: MediaItem | null, altText: string, className = styles.mediaFrame) {
@@ -314,8 +366,7 @@ function renderMedia(media: MediaItem | null, altText: string, className = style
 }
 
 export async function generateMetadata({ params }: { params: PageParams }): Promise<Metadata> {
-  const { slug } = await params;
-  const id = extractId(slug);
+  const { id } = await params;
   const post = await getPost(id);
 
   if (!post) {
@@ -327,7 +378,7 @@ export async function generateMetadata({ params }: { params: PageParams }): Prom
 
   const title = `${getPostTitle(post)} | EchoId`;
   const description = getSeoDescription(post);
-  const canonical = getPostUrl(slug);
+  const canonical = getPostUrl(post);
   const leadMedia = getLeadMedia(post);
   const image = leadMedia?.kind === "image" ? leadMedia.url : undefined;
 
@@ -360,8 +411,7 @@ export async function generateMetadata({ params }: { params: PageParams }): Prom
 }
 
 export default async function Page({ params }: { params: PageParams }) {
-  const { slug } = await params;
-  const id = extractId(slug);
+  const { id, slug } = await params;
   const post = await getPost(id);
 
   if (!post) {
@@ -373,6 +423,11 @@ export default async function Page({ params }: { params: PageParams }) {
         </section>
       </main>
     );
+  }
+
+  const canonicalPath = getPostPath(post);
+  if (slug !== slugify(getPostTitle(post))) {
+    permanentRedirect(canonicalPath);
   }
 
   const author = post.name || "Anonymous";

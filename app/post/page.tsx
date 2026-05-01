@@ -97,7 +97,7 @@ function getPostId(post: PublicPost) {
 
 function getPostHref(post: PublicPost) {
   const id = getPostId(post);
-  return `/post/${slugify(post.title || "echo")}-${id}`;
+  return `/post/${encodeURIComponent(id)}/${slugify(post.title || "echo")}`;
 }
 
 function isVideoUrl(url = "") {
