@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { permanentRedirect } from "next/navigation";
+import PostShareButton from "./PostShareButton";
 import styles from "@/styles/Post.module.css";
 
 type PageParams = Promise<{ id: string; slug: string }>;
@@ -440,6 +441,7 @@ export default async function Page({ params }: { params: PageParams }) {
   const fullBody = stripMediaLinks(post.body);
   const category = displayCategory(post.category);
   const appPostHref = `${appOrigin}/app/post/${post.id}`;
+  const sharePreviewText = (title || fullBody || "").trim().slice(0, 160);
 
   return (
     <main className={styles.page}>
@@ -519,6 +521,14 @@ export default async function Page({ params }: { params: PageParams }) {
           <a href={appPostHref} className={styles.cta}>
             Open full experience
           </a>
+          <PostShareButton
+            shareUrl={appPostHref}
+            title={title}
+            author={author}
+            previewText={sharePreviewText}
+            previewMediaUrl={leadMedia?.url}
+            previewMediaKind={leadMedia?.kind}
+          />
         </aside>
       </section>
     </main>
