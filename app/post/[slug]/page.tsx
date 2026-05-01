@@ -51,7 +51,8 @@ const bodyImageLinkRegex = /\[(Link|Link_cover):-\s*(https?:\/\/[^\]\s]+)\s*\]/g
 const partialBodyImageLinkRegex = /\[(?:Link|Link_cover):-?[^\]\n]*\]?/gi;
 const mediaTokenRegex = /\[\[media:([^[\]]+)\]\]/g;
 const videoCoverUrlRegex = /\.(mp4|mov|webm|ogg|m4v)(?:[?#].*)?$/i;
-const publicPostsHref = "/";
+const publicPostsHref = "/post";
+const appOrigin = "https://app.echoidchat.online";
 
 function extractId(slug?: string) {
   if (!slug || typeof slug !== "string") return "";
@@ -338,7 +339,7 @@ export default async function Page({ params }: { params: PageParams }) {
   const extraMedia = mediaItems.filter((item) => item.url && item.url !== leadMedia?.url && bodyBlocks.length === 0);
   const fullBody = stripMediaLinks(post.body);
   const category = displayCategory(post.category);
-  const appPostHref = `/app/post/${post.id}`;
+  const appPostHref = `${appOrigin}/app/post/${post.id}`;
 
   return (
     <main className={styles.page}>
