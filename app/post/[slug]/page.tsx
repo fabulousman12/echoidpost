@@ -46,7 +46,7 @@ const mediaTokenRegex = /\[\[media:([^[\]]+)\]\]/g;
 const videoCoverUrlRegex = /\.(mp4|mov|webm|ogg|m4v)(?:[?#].*)?$/i;
 const publicPostsHref = "/post";
 const appOrigin = "https://app.echoidchat.online";
-const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL || "https://seo.echoidchat.online";
+const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL || "https://post.echoidchat.online";
 
 function extractId(slug?: string) {
   if (!slug || typeof slug !== "string") return "";
