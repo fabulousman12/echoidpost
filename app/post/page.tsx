@@ -46,6 +46,7 @@ type PublicPost = {
 
 const appOrigin = "https://app.echoidchat.online";
 const apiOrigin = "https://server.echoidchat.online";
+const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL || "https://post.echoidchat.online";
 const homeCategoryLabels = ["All posts", "Tech", "Rant", "Story", "Questions", "Civic sense", "Politics", "Confessions"];
 const sortOptions = [
   { id: "like", label: "By popularity" },
@@ -276,6 +277,9 @@ function renderMedia(media: MediaItem | undefined, altText: string) {
 export const metadata = {
   title: "EchoId public posts",
   description: "Browse public EchoId posts and open the full app conversation.",
+  alternates: {
+    canonical: `${siteOrigin}/post`,
+  },
 };
 
 export default async function Page({ searchParams }: { searchParams: SearchParams }) {
