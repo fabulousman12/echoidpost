@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import styles from "@/styles/Post.module.css";
 
 type PageParams = Promise<{ slug: string }>;
@@ -15,22 +16,14 @@ type BodyBlock =
 type PublicPost = {
   id: string;
   _id?: string;
+  posterId?: string;
   title?: string;
   body?: string;
   name?: string;
   username?: string;
   createdAt?: string;
   category?: string;
-  subCategory?: string;
   coverImage?: string;
-  cover_image?: string;
-  coverUrl?: string;
-  cover_url?: string;
-  coverType?: string;
-  coverMimeType?: string;
-  profilePic?: string;
-  profileUrl?: string;
-  userProfile?: string;
   likes?: number;
   comments?: number;
   dislike?: number;
@@ -53,6 +46,7 @@ const mediaTokenRegex = /\[\[media:([^[\]]+)\]\]/g;
 const videoCoverUrlRegex = /\.(mp4|mov|webm|ogg|m4v)(?:[?#].*)?$/i;
 const publicPostsHref = "/post";
 const appOrigin = "https://app.echoidchat.online";
+const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL || "https://seo.echoidchat.online";
 
 function extractId(slug?: string) {
   if (!slug || typeof slug !== "string") return "";
@@ -162,8 +156,7 @@ function getPostMediaItems(post: PublicPost) {
     mediaItems,
     seenUrls,
     {
-      url: post.coverImage || post.cover_image || post.coverUrl || post.cover_url || "",
-      kind: post.coverType || post.coverMimeType || "",
+      url: post.coverImage || "",
       isCover: true,
     },
     true
@@ -265,6 +258,33 @@ function displayCategory(value?: string) {
     .join(" ");
 }
 
+function getAuthorName(post: PublicPost) {
+  return post.name || (post.username ? `@${post.username}` : "EchoId user");
+}
+
+function getPostTitle(post: PublicPost) {
+  return post.title?.trim() || "EchoId post";
+}
+
+function getSeoDescription(post: PublicPost) {
+  const body = stripMediaLinks(post.body).replace(/\s+/g, " ").trim();
+  const author = getAuthorName(post);
+  const category = displayCategory(post.category);
+  const stats = [
+    Number(post.likes || 0) ? `${Number(post.likes || 0)} likes` : "",
+    Number(post.comments || 0) ? `${Number(post.comments || 0)} comments` : "",
+    Number(post.witness || 0) ? `${Number(post.witness || 0)} witness` : "",
+  ].filter(Boolean);
+  const context = [author, category, ...stats].filter(Boolean).join(" • ");
+  const description = [body, context].filter(Boolean).join(" — ");
+
+  return (description || `Public EchoId post by ${author}`).slice(0, 160);
+}
+
+function getPostUrl(slug: string) {
+  return `${siteOrigin}/post/${encodeURIComponent(slug)}`;
+}
+
 async function getPost(id: string): Promise<PublicPost | null> {
   const res = await fetch(`https://server.echoidchat.online/post/public/${id}`, {
     next: { revalidate: 60 },
@@ -293,23 +313,48 @@ function renderMedia(media: MediaItem | null, altText: string, className = style
   );
 }
 
-export async function generateMetadata({ params }: { params: PageParams }) {
+export async function generateMetadata({ params }: { params: PageParams }): Promise<Metadata> {
   const { slug } = await params;
   const id = extractId(slug);
   const post = await getPost(id);
 
-  if (!post) return { title: "Post not found" };
+  if (!post) {
+    return {
+      title: "Post not found | EchoId",
+      robots: { index: false, follow: false },
+    };
+  }
 
-  const description = stripMediaLinks(post.body).slice(0, 150);
+  const title = `${getPostTitle(post)} | EchoId`;
+  const description = getSeoDescription(post);
+  const canonical = getPostUrl(slug);
   const leadMedia = getLeadMedia(post);
+  const image = leadMedia?.kind === "image" ? leadMedia.url : undefined;
 
   return {
-    title: post.title || "EchoId post",
+    title,
     description,
+    authors: [{ name: getAuthorName(post) }],
+    category: post.category,
+    alternates: {
+      canonical,
+    },
     openGraph: {
-      title: post.title || "EchoId post",
+      type: "article",
+      url: canonical,
+      title,
       description,
-      images: leadMedia?.kind === "image" ? [leadMedia.url] : [],
+      siteName: "EchoId",
+      publishedTime: post.createdAt,
+      authors: [getAuthorName(post)],
+      section: displayCategory(post.category) || undefined,
+      images: image ? [{ url: image, alt: getPostTitle(post) }] : [],
+    },
+    twitter: {
+      card: image ? "summary_large_image" : "summary",
+      title,
+      description,
+      images: image ? [image] : [],
     },
   };
 }
@@ -332,7 +377,7 @@ export default async function Page({ params }: { params: PageParams }) {
 
   const author = post.name || "Anonymous";
   const handle = post.username ? `@${post.username}` : "@anonymous";
-  const title = post.title || "EchoId post";
+  const title = getPostTitle(post);
   const leadMedia = getLeadMedia(post);
   const mediaItems = getPostMediaItems(post);
   const bodyBlocks = getBodyBlocks(post);
@@ -367,11 +412,7 @@ export default async function Page({ params }: { params: PageParams }) {
             <section className={styles.copy}>
               <div className={styles.authorCard}>
                 <div className={styles.avatar} aria-hidden="true">
-                  {post.profilePic || post.profileUrl || post.userProfile ? (
-                    <img src={post.profilePic || post.profileUrl || post.userProfile} alt={author} />
-                  ) : (
-                    <span>{author.charAt(0).toUpperCase()}</span>
-                  )}
+                  <span>{author.charAt(0).toUpperCase()}</span>
                 </div>
                 <div className={styles.authorCopy}>
                   <strong>{author}</strong>
@@ -382,7 +423,6 @@ export default async function Page({ params }: { params: PageParams }) {
               <div className={styles.metaRow}>
                 {formatRelativeTime(post.createdAt) ? <span>{formatRelativeTime(post.createdAt)}</span> : null}
                 {category ? <span>{category}</span> : null}
-                {post.subCategory ? <span>{displayCategory(post.subCategory)}</span> : null}
               </div>
 
               <h1 className={styles.title}>{title}</h1>
