@@ -1,4 +1,5 @@
 import styles from "@/styles/Feed.module.css";
+import PostMediaCarousel, { type PostMediaItem } from "@/components/PostMediaCarousel";
 
 type SearchParams = Promise<{
   category?: string;
@@ -6,10 +7,11 @@ type SearchParams = Promise<{
   page?: string;
 }>;
 
-type MediaItem = {
+type MediaItem = PostMediaItem & {
   url: string;
   kind: "image" | "video";
   isCover?: boolean;
+  thumbnailUrl?: string;
 };
 
 type PublicPost = {
@@ -57,6 +59,7 @@ const bodyImageLinkRegex = /\[(Link|Link_cover):-\s*(https?:\/\/[^\]\s]+)\s*\]/g
 const partialBodyImageLinkRegex = /\[(?:Link|Link_cover):-?[^\]\n]*\]?/gi;
 const mediaTokenRegex = /\[\[media:([^[\]]+)\]\]/g;
 const videoCoverUrlRegex = /\.(mp4|mov|webm|ogg|m4v)(?:[?#].*)?$/i;
+const imageCoverUrlRegex = /\.(png|jpe?g|gif|webp|avif|bmp|svg)(?:[?#].*)?$/i;
 const postPreviewLimit = 110;
 
 function toCategoryValue(value?: string) {
@@ -102,11 +105,32 @@ function getPostHref(post: PublicPost) {
 }
 
 function isVideoUrl(url = "") {
-  return videoCoverUrlRegex.test(String(url).trim());
+  const raw = String(url).trim();
+  return videoCoverUrlRegex.test(raw) || /^data:video\//i.test(raw);
 }
 
-function getMediaKindFromUrl(url = ""): "image" | "video" {
-  return isVideoUrl(url) ? "video" : "image";
+function getVideoThumbnailUrl(url = "") {
+  const raw = String(url || "").trim();
+  if (!raw || !videoCoverUrlRegex.test(raw)) return "";
+  return raw.replace(/\.(mp4|mov|webm|ogg|m4v)([?#].*)?$/i, ".png$2");
+}
+
+function isImageUrl(url = "") {
+  const raw = String(url).trim();
+  return imageCoverUrlRegex.test(raw) || /^data:image\//i.test(raw);
+}
+
+function isSafeMediaUrl(url = "") {
+  const raw = String(url || "").trim();
+  if (!raw || /[\u0000-\u001f]/.test(raw)) return false;
+  if (/^(javascript|vbscript|data:text|data:application):/i.test(raw)) return false;
+  return /^(https?:\/\/|blob:|data:image\/|data:video\/)/i.test(raw);
+}
+
+function getMediaKindFromUrl(url = ""): "image" | "video" | "" {
+  if (isVideoUrl(url)) return "video";
+  if (isImageUrl(url) || /^https?:\/\//i.test(String(url || "").trim())) return "image";
+  return "";
 }
 
 function getStructuredMediaUrl(entry: unknown) {
@@ -135,7 +159,7 @@ function getStructuredMediaUrl(entry: unknown) {
   ).trim();
 }
 
-function getStructuredMediaKind(entry: unknown, fallbackUrl = ""): "image" | "video" {
+function getStructuredMediaKind(entry: unknown, fallbackUrl = ""): "image" | "video" | "" {
   if (entry && typeof entry === "object") {
     const value = entry as Record<string, unknown>;
     const explicitKind = String(value.kind || value.mediaType || value.type || value.mimeType || "")
@@ -149,14 +173,17 @@ function getStructuredMediaKind(entry: unknown, fallbackUrl = ""): "image" | "vi
 
 function pushMediaItem(items: MediaItem[], seenUrls: Set<string>, entry: unknown, isCover = false) {
   const url = getStructuredMediaUrl(entry);
-  if (!url || seenUrls.has(url)) return;
-  seenUrls.add(url);
+  if (!url || seenUrls.has(url) || !isSafeMediaUrl(url)) return;
 
   const entryRecord = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+  const kind = getStructuredMediaKind(entry, url);
+  if (kind !== "image" && kind !== "video") return;
+  seenUrls.add(url);
   items.push({
     url,
-    kind: getStructuredMediaKind(entry, url),
+    kind,
     isCover: Boolean(isCover || entryRecord.isCover || entryRecord.cover),
+    thumbnailUrl: String(entryRecord.thumbnailUrl || entryRecord.thumbnail_url || entryRecord.poster || entryRecord.posterUrl || getVideoThumbnailUrl(url)),
   });
 }
 
@@ -170,9 +197,10 @@ function extractBodyMediaItems(body = "") {
   while ((match = bodyImageLinkRegex.exec(source))) {
     const label = String(match[1] || "").trim().toLowerCase();
     const url = String(match[2] || "").trim();
-    if (!url || seenUrls.has(url)) continue;
+    const kind = getMediaKindFromUrl(url);
+    if (!url || seenUrls.has(url) || !isSafeMediaUrl(url) || !kind) continue;
     seenUrls.add(url);
-    mediaItems.push({ url, kind: getMediaKindFromUrl(url), isCover: label === "link_cover" });
+    mediaItems.push({ url, kind, isCover: label === "link_cover", thumbnailUrl: kind === "video" ? getVideoThumbnailUrl(url) : "" });
   }
   bodyImageLinkRegex.lastIndex = 0;
 
@@ -260,17 +288,28 @@ async function getFeed(category: string, filter: string, page: number): Promise<
   };
 }
 
-function renderMedia(media: MediaItem | undefined, altText: string) {
-  if (!media?.url) return null;
+function renderMediaCarousel(mediaItems: MediaItem[], altText: string) {
+  if (!mediaItems.length) return null;
 
   return (
-    <div className={styles.mediaFrame}>
-      {media.kind === "video" ? (
-        <video src={media.url} className={styles.media} controls playsInline preload="metadata" />
-      ) : (
-        <img src={media.url} alt={altText} className={styles.media} />
-      )}
-    </div>
+    <PostMediaCarousel
+      mediaItems={mediaItems}
+      altText={altText}
+      className={styles.postCarousel}
+      frameClassName={styles.mediaFrame}
+      mediaClassName={styles.media}
+      dotsClassName={styles.carouselDots}
+      dotClassName={styles.carouselDot}
+      activeDotClassName={styles.activeCarouselDot}
+      thumbsClassName={styles.carouselThumbs}
+      thumbClassName={styles.carouselThumb}
+      activeThumbClassName={styles.activeCarouselThumb}
+      thumbMediaClassName={styles.carouselThumbMedia}
+      videoClassName={styles.videoThumbShell}
+      videoControlsClassName={styles.videoThumbControls}
+      videoFallbackClassName={styles.videoThumbFallback}
+      videoPlayClassName={styles.videoPlayOverlay}
+    />
   );
 }
 
@@ -369,7 +408,7 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
                     </div>
 
                     <h3 className={styles.postTitle}>{title}</h3>
-                    {mediaItems.length > 0 ? <div className={styles.imageWrap}>{renderMedia(mediaItems[0], title)}</div> : null}
+                    {mediaItems.length > 0 ? <div className={styles.imageWrap}>{renderMediaCarousel(mediaItems, title)}</div> : null}
                     <p>{getPostBodyPreview(post.body) || "Media-only post"}</p>
                   </a>
 

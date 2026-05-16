@@ -87,6 +87,135 @@
   object-fit: contain;
 }
 
+.videoThumbShell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.videoThumbShell .media {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.videoThumbFallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  align-content: center;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  background: linear-gradient(145deg, #171923, #262033);
+}
+
+.videoPlayOverlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: transparent;
+  background: radial-gradient(circle, rgba(0, 0, 0, 0.28), transparent 42%);
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.videoPlayOverlay::before {
+  content: "";
+  width: 58px;
+  height: 58px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 14px 28px rgba(33, 24, 53, 0.22);
+}
+
+.videoPlayOverlay::after {
+  content: "";
+  position: absolute;
+  margin-left: 5px;
+  border-top: 13px solid transparent;
+  border-bottom: 13px solid transparent;
+  border-left: 19px solid #4e3ed1;
+}
+
+.videoThumbShell:global(.is-playing) .videoPlayOverlay {
+  opacity: 0;
+}
+
+.videoThumbControls {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: rgba(12, 14, 20, 0.42);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, background 0.18s ease;
+}
+
+.videoThumbShell:hover .videoThumbControls,
+.videoThumbShell:focus-within .videoThumbControls {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.videoThumbControls input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  height: 12px;
+  accent-color: #f8f0ff;
+}
+
+.videoThumbControls button {
+  width: 30px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  position: relative;
+}
+
+@media (hover: none) {
+  .videoThumbControls {
+    left: 8px;
+    right: 8px;
+    bottom: 7px;
+    grid-template-columns: 26px minmax(0, 1fr) 26px;
+    gap: 5px;
+    padding: 3px 5px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .videoThumbControls input[type="range"] {
+    height: 10px;
+  }
+
+  .videoThumbControls button {
+    width: 26px;
+    height: 22px;
+    font-size: 8px;
+  }
+}
+
 .sheet {
   position: relative;
   z-index: 1;

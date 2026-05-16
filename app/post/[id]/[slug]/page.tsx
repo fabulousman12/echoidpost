@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { permanentRedirect } from "next/navigation";
 import PostShareButton from "./PostShareButton";
 import styles from "@/styles/Post.module.css";
+import VideoPreview from "@/components/VideoPreview";
 
 type PageParams = Promise<{ id: string; slug: string }>;
 
@@ -9,6 +10,7 @@ type MediaItem = {
   url: string;
   kind: "image" | "video";
   isCover?: boolean;
+  thumbnailUrl?: string;
 };
 
 type BodyBlock =
@@ -26,6 +28,11 @@ type PublicPost = {
   createdAt?: string;
   category?: string;
   coverImage?: string;
+  cover_image?: string;
+  coverUrl?: string;
+  cover_url?: string;
+  coverType?: string;
+  coverMimeType?: string;
   likes?: number;
   comments?: number;
   dislike?: number;
@@ -60,8 +67,10 @@ const bodyImageLinkRegex = /\[(Link|Link_cover):-\s*(https?:\/\/[^\]\s]+)\s*\]/g
 const partialBodyImageLinkRegex = /\[(?:Link|Link_cover):-?[^\]\n]*\]?/gi;
 const mediaTokenRegex = /\[\[media:([^[\]]+)\]\]/g;
 const videoCoverUrlRegex = /\.(mp4|mov|webm|ogg|m4v)(?:[?#].*)?$/i;
+const imageCoverUrlRegex = /\.(png|jpe?g|gif|webp|avif|bmp|svg)(?:[?#].*)?$/i;
 const publicPostsHref = "/post";
 const appOrigin = "https://app.echoidchat.online";
+const apiOrigin = process.env.NEXT_PUBLIC_API_URL || process.env.API_ORIGIN || "https://server.echoidchat.online";
 const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL || "https://post.echoidchat.online";
 
 function slugify(value: string) {
@@ -75,11 +84,32 @@ function slugify(value: string) {
 }
 
 function isVideoUrl(url = "") {
-  return videoCoverUrlRegex.test(String(url).trim());
+  const raw = String(url).trim();
+  return videoCoverUrlRegex.test(raw) || /^data:video\//i.test(raw);
 }
 
-function getMediaKindFromUrl(url = ""): "image" | "video" {
-  return isVideoUrl(url) ? "video" : "image";
+function getVideoThumbnailUrl(url = "") {
+  const raw = String(url || "").trim();
+  if (!raw || !videoCoverUrlRegex.test(raw)) return "";
+  return raw.replace(/\.(mp4|mov|webm|ogg|m4v)([?#].*)?$/i, ".png$2");
+}
+
+function isImageUrl(url = "") {
+  const raw = String(url).trim();
+  return imageCoverUrlRegex.test(raw) || /^data:image\//i.test(raw);
+}
+
+function isSafeMediaUrl(url = "") {
+  const raw = String(url || "").trim();
+  if (!raw || /[\u0000-\u001f]/.test(raw)) return false;
+  if (/^(javascript|vbscript|data:text|data:application):/i.test(raw)) return false;
+  return /^(https?:\/\/|blob:|data:image\/|data:video\/)/i.test(raw);
+}
+
+function getMediaKindFromUrl(url = ""): "image" | "video" | "" {
+  if (isVideoUrl(url)) return "video";
+  if (isImageUrl(url) || /^https?:\/\//i.test(String(url || "").trim())) return "image";
+  return "";
 }
 
 function getStructuredMediaUrl(entry: unknown) {
@@ -108,7 +138,7 @@ function getStructuredMediaUrl(entry: unknown) {
   ).trim();
 }
 
-function getStructuredMediaKind(entry: unknown, fallbackUrl = ""): "image" | "video" {
+function getStructuredMediaKind(entry: unknown, fallbackUrl = ""): "image" | "video" | "" {
   if (entry && typeof entry === "object") {
     const value = entry as Record<string, unknown>;
     const explicitKind = String(value.kind || value.mediaType || value.type || value.mimeType || "")
@@ -122,14 +152,17 @@ function getStructuredMediaKind(entry: unknown, fallbackUrl = ""): "image" | "vi
 
 function pushMediaItem(items: MediaItem[], seenUrls: Set<string>, entry: unknown, isCover = false) {
   const url = getStructuredMediaUrl(entry);
-  if (!url || seenUrls.has(url)) return;
-  seenUrls.add(url);
+  if (!url || seenUrls.has(url) || !isSafeMediaUrl(url)) return;
 
   const entryRecord = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+  const kind = getStructuredMediaKind(entry, url);
+  if (kind !== "image" && kind !== "video") return;
+  seenUrls.add(url);
   items.push({
     url,
-    kind: getStructuredMediaKind(entry, url),
+    kind,
     isCover: Boolean(isCover || entryRecord.isCover || entryRecord.cover),
+    thumbnailUrl: String(entryRecord.thumbnailUrl || entryRecord.thumbnail_url || entryRecord.poster || entryRecord.posterUrl || getVideoThumbnailUrl(url)),
   });
 }
 
@@ -143,12 +176,14 @@ function extractBodyMediaItems(body = "") {
   while ((match = bodyImageLinkRegex.exec(source))) {
     const label = String(match[1] || "").trim().toLowerCase();
     const url = String(match[2] || "").trim();
-    if (!url || seenUrls.has(url)) continue;
+    const kind = getMediaKindFromUrl(url);
+    if (!url || seenUrls.has(url) || !isSafeMediaUrl(url) || !kind) continue;
     seenUrls.add(url);
     mediaItems.push({
       url,
-      kind: getMediaKindFromUrl(url),
+      kind,
       isCover: label === "link_cover",
+      thumbnailUrl: kind === "video" ? getVideoThumbnailUrl(url) : "",
     });
   }
   bodyImageLinkRegex.lastIndex = 0;
@@ -178,6 +213,8 @@ function getPostMediaItems(post: PublicPost) {
     seenUrls,
     {
       url: post.coverImage || "",
+      mediaUrl: post.cover_image || post.coverUrl || post.cover_url || "",
+      kind: post.coverType || post.coverMimeType || "",
       isCover: true,
     },
     true
@@ -221,13 +258,15 @@ function getBodyBlocks(post: PublicPost) {
 
     const label = String(match[1] || "").trim().toLowerCase();
     const url = String(match[2] || "").trim();
+    const kind = getMediaKindFromUrl(url);
     const media: MediaItem = {
       url,
       isCover: label === "link_cover",
-      kind: getMediaKindFromUrl(url),
+      kind: kind || "image",
+      thumbnailUrl: kind === "video" ? getVideoThumbnailUrl(url) : "",
     };
 
-    if (url && (!leadMedia || url !== leadMedia.url)) {
+    if (url && kind && isSafeMediaUrl(url) && (!leadMedia || url !== leadMedia.url)) {
       blocks.push({ type: "media", key: `media-${match.index}`, value: media });
     }
 
@@ -337,7 +376,7 @@ function getPostUrl(post: PublicPost) {
 }
 
 async function getPost(id: string): Promise<PublicPost | null> {
-  const res = await fetch(`https://server.echoidchat.online/post/public/${id}`, {
+  const res = await fetch(`${apiOrigin}/post/public/${id}`, {
     next: { revalidate: 60 },
   });
 
@@ -358,7 +397,16 @@ function renderMedia(media: MediaItem | null, altText: string, className = style
   return (
     <div className={className}>
       {media.kind === "video" ? (
-        <video src={media.url} className={styles.media} controls playsInline preload="metadata" />
+        <VideoPreview
+          src={media.url}
+          poster={media.thumbnailUrl}
+          className={styles.videoThumbShell}
+          mediaClassName={styles.media}
+          controlsClassName={styles.videoThumbControls}
+          fallbackClassName={styles.videoThumbFallback}
+          playClassName={styles.videoPlayOverlay}
+          fullscreenUrl={media.url}
+        />
       ) : (
         <img src={media.url} alt={altText} className={styles.media} />
       )}
